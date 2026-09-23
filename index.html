@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fancy Unlimited Collection</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f6f8;color:#111827;font-family:Arial,sans-serif}
+.cover{height:270px;background:#e5e7eb center/cover no-repeat;position:relative}
+.admin{position:absolute;right:16px;top:14px;color:#fff;text-shadow:0 1px 4px #000;font-weight:700}
+.head{max-width:1100px;margin:-65px auto 0;position:relative;padding:0 16px}
+.top{display:flex;align-items:end;gap:16px}
+.avatar{width:130px;height:130px;border-radius:50%;border:6px solid #fff;object-fit:cover;background:#fff}
+.name{font-size:29px;font-weight:800;color:#fff;text-shadow:0 2px 5px #000}
+.bio{padding:15px 0;line-height:1.5;font-weight:700;font-size:15px}
+.status{max-width:1100px;margin:8px auto 0;padding:0 16px;color:#667085;font-size:13px}
+.status.error{color:#b42318}
+.tools{max-width:1100px;margin:15px auto 0;padding:0 16px}
+.tools input{width:100%;padding:14px;border:1px solid #ddd;border-radius:12px;font-size:16px;background:#fff}
+.grid{max-width:1100px;margin:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:15px;padding:15px 16px 40px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden}
+.main{width:100%;height:auto;aspect-ratio:4/5;object-fit:contain;background:#fff;display:block;cursor:zoom-in;padding:4px}
+.thumbs{display:flex;gap:5px;overflow:auto;padding:7px}
+.thumbs img{width:50px;height:60px;object-fit:contain;background:#fff;border-radius:6px;cursor:pointer}
+.info{padding:11px}
+.price{font-size:19px;font-weight:800}
+.line{margin-top:5px;font-weight:600}
+.desc{white-space:pre-line;margin-top:6px;color:#667085;line-height:1.35;font-size:11px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:11px}
+.btn{border:0;border-radius:9px;padding:10px;font-weight:700;background:#eef1f5;cursor:pointer}
+.order{background:#16a34a;color:#fff}
+.share{grid-column:1/-1}
+.empty{grid-column:1/-1;background:#fff;padding:25px;border-radius:12px;text-align:center;color:#667085}
+.modal{display:none;position:fixed;inset:0;background:#000c;z-index:10;align-items:center;justify-content:center}
+.modal.open{display:flex}
+.modal img{max-width:95%;max-height:92%;object-fit:contain}
+@media(max-width:600px){
+.cover{height:205px}.avatar{width:105px;height:105px}.name{font-size:21px}
+.grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:15px 8px 30px;gap:9px}
+.tools{padding:0 16px}.info{padding:8px}.main{aspect-ratio:4/5}.desc{font-size:10px}
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./data.js?v=2"></script>
+</head>
+<body>
+<div id="cover" class="cover">
+  <a class="admin" href="./admin.html">Admin Login</a>
+</div>
+
+<div class="head">
+  <div class="top">
+    <img id="avatar" class="avatar" alt="Profile">
+    <div id="site" class="name">Fancy Unlimited Collection</div>
+  </div>
+  <div id="bio" class="bio"></div>
+</div>
+
+<div id="status" class="status">Loading store...</div>
+
+<div class="tools">
+  <input id="search" type="search" placeholder="Search products..." autocomplete="off">
+</div>
+
+<main id="grid" class="grid"></main>
+
+<div id="modal" class="modal">
+  <img id="zoom" alt="Product image">
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const DEFAULT = window.FUC_DEFAULT_DATA || {};
+  const CFG = window.FUC_SUPABASE || {};
+  const fallback = {
+    siteName: DEFAULT.siteName || "Fancy Unlimited Collection",
+    whatsapp: DEFAULT.whatsapp || "9119392297",
+    bio: DEFAULT.bio || "",
+    coverImage: DEFAULT.coverImage || "",
+    profileImage: DEFAULT.profileImage || "",
+    fabric: DEFAULT.fabric || "Fiber Cotton",
+    sizes: DEFAULT.sizes || "All size available ✅"
+  };
+
+  let settings = {...fallback};
+  let products = [];
+  let sb = null;
+
+  const $ = id => document.getElementById(id);
+  const cover = $("cover");
+  const avatar = $("avatar");
+  const site = $("site");
+  const bio = $("bio");
+  const status = $("status");
+  const search = $("search");
+  const grid = $("grid");
+  const modal = $("modal");
+  const zoom = $("zoom");
+
+  function setStatus(text, error){
+    status.textContent = text || "";
+    status.className = "status" + (error ? " error" : "");
+  }
+
+  function applySettings(){
+    site.textContent = settings.siteName;
+    bio.textContent = settings.bio;
+    if(settings.coverImage) cover.style.backgroundImage = 'url("' + settings.coverImage.replace(/"/g,'\\"') + '")';
+    if(settings.profileImage) avatar.src = settings.profileImage;
+  }
+
+  function esc(value){
+    return String(value ?? "").replace(/[&<>"']/g, function(ch){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch];
+    });
+  }
+
+  function normalizeImages(images){
+    if(!Array.isArray(images)) return [];
+    return images.map(function(item){
+      if(typeof item === "string") return {src:item};
+      return item && item.src ? {src:item.src} : null;
+    }).filter(Boolean);
+  }
+
+  function normalizeProduct(x){
+    return {
+      id: String(x.id ?? ""),
+      title: String(x.title ?? "Kids dress"),
+      price: Number(x.price ?? 560),
+      description: String(x.description ?? ""),
+      images: normalizeImages(x.images)
+    };
+  }
+
+  function render(){
+    const q = search.value.trim().toLowerCase();
+    const list = products.filter(function(x){
+      return (x.title + " " + x.id + " " + x.description).toLowerCase().includes(q);
+    });
+
+    if(!list.length){
+      grid.innerHTML = '<div class="empty">No products available yet.</div>';
+      return;
+    }
+    grid.innerHTML = list.map(card).join("");
+  }
+
+  function card(x){
+    const images = x.images || [];
+    const first = images[0]?.src || "";
+    const thumbs = images.map(function(im){
+      return '<img src="' + esc(im.src) + '" alt="" onclick="window.FUC_pick(this)">';
+    }).join("");
+
+    return '<article class="card" id="product-' + esc(x.id) + '">' +
+      '<img class="main" src="' + esc(first) + '" alt="' + esc(x.title) + '" onclick="window.FUC_zoom(this.src)">' +
+      '<div class="thumbs">' + thumbs + '</div>' +
+      '<div class="info">' +
+        '<div class="price">Price ₹' + Number(x.price || 0).toLocaleString("en-IN") + '</div>' +
+        '<div class="line">' + esc(settings.fabric) + '</div>' +
+        '<div class="line">' + esc(settings.sizes) + '</div>' +
+        '<div class="desc">' + esc(x.description) + '</div>' +
+        '<div class="actions">' +
+          '<button class="btn order" onclick="window.FUC_order(\'' + esc(x.id) + '\')">Order Now</button>' +
+          '<button class="btn" onclick="this.textContent=this.textContent.includes("♡")?"♥ Liked":"♡ Like"">♡ Like</button>' +
+          '<button class="btn" onclick="window.FUC_download(\'' + esc(x.id) + '\')">Download</button>' +
+          '<button class="btn share" onclick="window.FUC_share(\'' + esc(x.id) + '\')">Share</button>' +
+        '</div>' +
+      '</div>' +
+    '</article>';
+  }
+
+  window.FUC_pick = function(img){
+    const card = img.closest(".card");
+    if(card) card.querySelector(".main").src = img.src;
+  };
+
+  window.FUC_zoom = function(src){
+    if(!src) return;
+    zoom.src = src;
+    modal.classList.add("open");
+  };
+
+  modal.addEventListener("click", function(){
+    modal.classList.remove("open");
+  });
+
+  window.FUC_order = function(id){
+    const x = products.find(p => p.id === id);
+    if(!x) return;
+    const message = "Dress No: " + x.id + "\nProduct Name: " + x.title;
+    const number = String(settings.whatsapp || "9119392297").replace(/\D/g,"");
+    window.open("https://wa.me/" + number + "?text=" + encodeURIComponent(message), "_blank");
+  };
+
+  window.FUC_download = async function(id){
+    const x = products.find(p => p.id === id);
+    const src = x?.images?.[0]?.src;
+    if(!src) return;
+    try{
+      const response = await fetch(src);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = id + ".jpg";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }catch(e){
+      window.open(src, "_blank");
+    }
+  };
+
+  window.FUC_share = async function(id){
+    const x = products.find(p => p.id === id);
+    if(!x) return;
+    const url = location.href.split("#")[0] + "#" + encodeURIComponent(id);
+    try{
+      if(navigator.share){
+        await navigator.share({
+          title:x.title,
+          text:"Dress No: " + x.id + "\nProduct Name: " + x.title,
+          url:url
+        });
+      }else if(navigator.clipboard){
+        await navigator.clipboard.writeText(url);
+        setStatus("Product link copied.");
+      }
+    }catch(e){}
+  };
+
+  function timeoutPromise(ms){
+    return new Promise((_, reject) => setTimeout(() => reject(new Error("Supabase request timed out")), ms));
+  }
+
+  async function loadOnline(){
+    const valid = CFG.url && CFG.key &&
+      !String(CFG.url).includes("YOUR_") &&
+      !String(CFG.key).includes("YOUR_");
+
+    if(!valid){
+      setStatus("Store is running with local settings.");
+      render();
+      return;
+    }
+
+    if(!window.supabase || !window.supabase.createClient){
+      throw new Error("Supabase library did not load.");
+    }
+
+    sb = window.supabase.createClient(CFG.url, CFG.key);
+
+    const request = Promise.all([
+      sb.from("settings").select("*").eq("id",1).maybeSingle(),
+      sb.from("products").select("*").order("created_at",{ascending:false})
+    ]);
+
+    const result = await Promise.race([request, timeoutPromise(10000)]);
+    const s = result[0];
+    const pr = result[1];
+
+    if(s.error) throw new Error("Settings: " + s.error.message);
+    if(pr.error) throw new Error("Products: " + pr.error.message);
+
+    if(s.data){
+      settings = {
+        ...settings,
+        siteName: s.data.site_name || settings.siteName,
+        whatsapp: s.data.whatsapp || settings.whatsapp,
+        bio: s.data.bio || settings.bio,
+        coverImage: s.data.cover_url || settings.coverImage,
+        profileImage: s.data.profile_url || settings.profileImage
+      };
+    }
+
+    products = (pr.data || []).map(normalizeProduct);
+    applySettings();
+    render();
+
+    if(products.length){
+      setStatus(products.length + " product" + (products.length === 1 ? "" : "s") + " loaded.");
+    }else{
+      setStatus("Store is ready. No products have been added yet.");
+    }
+  }
+
+  async function init(){
+    applySettings();
+    render();
+
+    try{
+      await loadOnline();
+    }catch(error){
+      console.error(error);
+      products = Array.isArray(DEFAULT.products) ? DEFAULT.products.map(normalizeProduct) : [];
+      applySettings();
+      render();
+      setStatus("Online store could not be loaded: " + (error.message || error), true);
+    }
+  }
+
+  search.addEventListener("input", render);
+  init();
+})();
+</script>
+</body>
+</html>
